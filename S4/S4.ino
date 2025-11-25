@@ -1,84 +1,88 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <WiFiClientSecure.h>
 #include "env.h"
 
-WiFiClient client;          //cria objeto p/ WiFi
-PubSubClient mqtt(client);  //cria objeto p/ mqtt usando WiFi
+WiFiClientSecure conexao_wifi;
+PubSubClient mqtt_broker(conexao_wifi);
 
-const byte ledPin = 2;
-
-const String brokerURL = "test.mosquitto.org";
-const int brokerPort = 1883;
-const String topico = "Topicomurilo";
-
-const String brokerUser = "";  //variável para o user do brocker
-const String brokerPass = "";  //variável para a senha do brocker
-
+const int led_esquerda = 18;
+const int led_direita = 19;
 
 void setup() {
-  pinMode(ledPin, OUTPUT);
-  Serial.begin(115200);    //configura a placa para mostrar na tela
-  WiFi.begin(SSID, PASS);  // tenta conectar na rede
-  Serial.println("Conectando no WiFi");
+  Serial.begin(115200);
+
+  conexao_wifi.setInsecure();
+
+  WiFi.begin(SSID, PASS);
+  Serial.println("Conectando Wifi...");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     delay(200);
   }
-  Serial.println("\nConectado com sucesso!");
+  Serial.println("\nWiFi conectado!");
 
-  //Configura a placa para mostra na tela
-  mqtt.setServer(BROKER_URL(), brokerPort);
-  Serial.println("Conectando no Broker");
-  
-  String boardID = "S1-"; //Cria um nome que começa com "s1-"
-  boardID += String(random(0xffff),HEX); //Junta o "s1-" com um número aleatório Hexadecimal
+  mqtt_broker.setServer(BROKER_URL, BROKER_PORT);
+  Serial.println("Conectando ao Broker...");
 
-  //Enquanto não estiver conectado mostra "."
-  while (!mqtt.connect()){
-    mqttClient.connect(userID.c_srt(),BROKER_USER_NAME, BROKER_URS_PASS);
+  String identificador = "Motor-";
+  identificador += String(random(0xffff), HEX);
+
+  while (!mqtt_broker.connected()) {
+    mqtt_broker.connect(identificador.c_str(), BROKER_USER_NAME, BROKER_USER_PASS);
     Serial.print(".");
-    delay(2000);
+    delay(200);
   }
+  Serial.println("\nBroker MQTT conectado!");
 
-  mqtt.subscribe(TOPIC1));
-  mqtt.setCallback(callback);
-  Serial.println("\nConectado com sucesso ao broker");
+  mqtt_broker.subscribe(TOPIC11);
+  mqtt_broker.setCallback(receber_callback);
 
+  pinMode(led_esquerda, OUTPUT);
+  pinMode(led_direita, OUTPUT);
+  digitalWrite(led_esquerda, LOW);
+  digitalWrite(led_direita, LOW);
 }
 
 void loop() {
-  String mensagem = "";   //texto com informação enviada para o broker
-  // Sring topico = "AulaIot/msg";
-  // mqtt.publish(topico.c_str(), msg.c_str());
-  // delay(20000);
-  // mqtt.loop(); 
-
-  if(Serial.available() > 0){
-    mensagem = Serial.readStringUntil('\n');
-    Serial.print("Mensagem digitada: ");
-    Serial.println(mensagem);
-    mqtt.publish("topicoluiz",mensagem.c_str()); //envia msg
+  String entrada = "";
+  if (Serial.available() > 0) {
+    entrada = Serial.readStringUntil('\n');
+    Serial.print("Enviado: ");
+    Serial.println(entrada);
+    mqtt_broker.publish("bezinho", entrada.c_str());
   }
-  mqtt.loop(); //mantem a conexão
+  mqtt_broker.loop();
 }
 
-void callback(char* topic, byte* payload, unsigned long length){
-    String mensagemRecebida = "";
-    for(int i = 0; i < length; i++){
-      mensagemRecebida += (char) payload[i];
-    }
-    Serial.println(mensagemRecebida);
+void receber_callback(char* topic, byte* payload, unsigned long length){
+  String valor_recebido = "";
 
-  if(mensagemRecebida == "acender" ) {
-    digitalWrite(ledPin, HIGH); 
-    delay(1000);      
-    Serial.println("ligando...");         
+  for(int i = 0; i < length; i++){
+    valor_recebido += (char) payload[i];
   }
+  valor_recebido.trim();
 
-  if(mensagemRecebida == "apagar" ) {              
-    digitalWrite(ledPin, LOW);  
-    delay(1000); 
-    Serial.println("apagando...");
+  Serial.println("Valor recebido: " + valor_recebido);
+
+  int velocidade_motor = valor_recebido.toInt();
+
+  Serial.print("Velocidade interpretada: ");
+  Serial.println(velocidade_motor);
+
+  if (velocidade_motor == 0) {
+    digitalWrite(led_esquerda, LOW);
+    digitalWrite(led_direita, LOW);
+    Serial.println("Motor parado");
+
+  } else if (velocidade_motor > 0) {
+    digitalWrite(led_esquerda, HIGH);
+    digitalWrite(led_direita, LOW);
+    Serial.println("Motor para frente");
+
+  } else {
+    digitalWrite(led_esquerda, LOW);
+    digitalWrite(led_direita, HIGH);
+    Serial.println("Motor para trás");
   }
-
 }
