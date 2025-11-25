@@ -5,80 +5,59 @@
 WiFiClient client;          //cria objeto p/ WiFi
 PubSubClient mqtt(client);  //cria objeto p/ mqtt usando WiFi
 
-const byte ledPin = 2;
-
-const String brokerURL = "test.mosquitto.org";
-const int brokerPort = 1883;
-const String topico = "Topicomurilo";
-
-const String brokerUser = "";  //variável para o user do brocker
-const String brokerPass = "";  //variável para a senha do brocker
-
-
 void setup() {
-  pinMode(ledPin, OUTPUT);
-  Serial.begin(115200);    //configura a placa para mostrar na tela
-  WiFi.begin(SSID, PASS);  // tenta conectar na rede
-  Serial.println("Conectando no WiFi");
+  Serial.begin(115200);
+  conexao_segura.setInsecure();
+  WiFi.begin(SSID, PASS);
+  Serial.println("Conectando Wifi");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     delay(200);
   }
-  Serial.println("\nConectado com sucesso!");
+  Serial.println("Wifi Conectado!");
 
-  //Configura a placa para mostra na tela
-  mqtt.setServer(BROKER_URL(), brokerPort);
-  Serial.println("Conectando no Broker");
-  
-  String boardID = "S1-"; //Cria um nome que começa com "s1-"
-  boardID += String(random(0xffff),HEX); //Junta o "s1-" com um número aleatório Hexadecimal
+  mqtt.setServer(BROKER_URL, BROKER_PORT);
+  Serial.println("Iniciando Broker");
+  String id = "S3-";
+  id += String(random(0xffff), HEX);
 
-  //Enquanto não estiver conectado mostra "."
-  while (!mqtt.connect()){
-    mqttClient.connect(userID.c_srt(),BROKER_USER_NAME, BROKER_URS_PASS);
+  while (!mqtt.connected()){
+    mqtt.connect(id.c_str(), BROKER_USER_NAME, BROKER_USER_PASS);
     Serial.print(".");
-    delay(2000);
+    delay(200);
   }
-
-  mqtt.subscribe(TOPIC1));
-  mqtt.setCallback(callback);
-  Serial.println("\nConectado com sucesso ao broker");
-
+  Serial.println("Broker OK!");
+  mqtt.subscribe(TOPIC4);
+  mqtt.subscribe(TOPIC3);
+  mqtt.subscribe(TOPIC5);
+  mqtt.subscribe(TOPIC6);
+  mqtt.setCallback(processar_callback);
+  pinMode(2, OUTPUT);
 }
 
 void loop() {
-  String mensagem = "";   //texto com informação enviada para o broker
-  // Sring topico = "AulaIot/msg";
-  // mqtt.publish(topico.c_str(), msg.c_str());
-  // delay(20000);
-  // mqtt.loop(); 
-
-  if(Serial.available() > 0){
-    mensagem = Serial.readStringUntil('\n');
-    Serial.print("Mensagem digitada: ");
-    Serial.println(mensagem);
-    mqtt.publish("topicoluiz",mensagem.c_str()); //envia msg
+  String dado = "";
+  if (Serial.available() > 0) {
+    dado = Serial.readStringUntil('\n');
+    Serial.print("Digite: ");
+    Serial.println(dado);
+    mqtt.publish("Bezao", dado.c_str());
   }
-  mqtt.loop(); //mantem a conexão
+  mqtt.loop();
 }
 
-void callback(char* topic, byte* payload, unsigned long length){
-    String mensagemRecebida = "";
-    for(int i = 0; i < length; i++){
-      mensagemRecebida += (char) payload[i];
-    }
-    Serial.println(mensagemRecebida);
-
-  if(mensagemRecebida == "acender" ) {
-    digitalWrite(ledPin, HIGH); 
-    delay(1000);      
-    Serial.println("ligando...");         
+void processar_callback(char* topico, byte* payload, unsigned long tamanho){
+  String msg_final = "";
+  for(int i = 0; i < tamanho; i++){
+    msg_final += (char) payload[i];
   }
-
-  if(mensagemRecebida == "apagar" ) {              
-    digitalWrite(ledPin, LOW);  
-    delay(1000); 
-    Serial.println("apagando...");
+  Serial.println(msg_final);
+  if(msg_final == "1") {
+    digitalWrite(2, HIGH);
+    Serial.println("Ligado!");
   }
-
+  if(msg_final == "0") {
+    digitalWrite(2, LOW);
+    Serial.println("Desligado!");
+  }
 }
