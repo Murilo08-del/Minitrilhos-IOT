@@ -1,84 +1,291 @@
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <DHT.h>
 #include "env.h"
 
-WiFiClient client;          //cria objeto p/ WiFi
-PubSubClient mqtt(client);  //cria objeto p/ mqtt usando WiFi
+void definirCorLED(byte vermelho, byte verde, byte azul);
+int obterDistanciaUltrassonica(byte pino_echo, byte pino_trigger);
 
-const byte ledPin = 2;
+#define SENSOR_LDR 34
+#define SENSOR_DHT 4
+#define PINO_TRIGGER 22
+#define PINO_ECHO 23
 
-const String brokerURL = "test.mosquitto.org";
-const int brokerPort = 1883;
-const String topico = "Topicomurilo";
+const byte pino_vermelho = 14;
+const byte pino_verde = 26;
+const byte pino_azul = 25;
+#define TIPO_DHT DHT11
 
-const String brokerUser = "";  //variável para o user do brocker
-const String brokerPass = "";  //variável para a senha do brocker
+DHT sensorDHT(SENSOR_DHT, TIPO_DHT);
+int dist = 0;
+bool presenca_anterior = false;
 
+WiFiClientSecure cliente_wifi;
+PubSubClient broker(cliente_wifi);
+
+void conectar_wifi() {
+  Serial.print("Conectando-se: ");
+  Serial.println(SSID);
+  definirCorLED(0, 0, 255);
+  WiFi.begin(SSID, PASS);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi OK!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+  definirCorLED(0, 255, 0);
+}
+
+void reconectar_broker() {
+  while (!broker.connected()) {
+    Serial.print("Conectando broker... ");
+    if (broker.connect("ESP32_S1", BROKER_USER_NAME, BROKER_USER_PASS)) {
+      Serial.println("OK!");
+      definirCorLED(0, 255, 0);
+    } else {
+      Serial.print("Erro(");
+      Serial.print(broker.state());
+      Serial.println("). Tentando em 5s...");
+      delay(5000);
+    }
+  }
+}
 
 void setup() {
-  pinMode(ledPin, OUTPUT);
-  Serial.begin(115200);    //configura a placa para mostrar na tela
-  WiFi.begin(SSID, PASS);  // tenta conectar na rede
-  Serial.println("Conectando no WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(200);
-  }
-  Serial.println("\nConectado com sucesso!");
+  Serial.begin(115200);
+  pinMode(SENSOR_LDR, INPUT);
+  sensorDHT.begin();
+  pinMode(PINO_TRIGGER, OUTPUT);
+  pinMode(PINO_ECHO, INPUT);
 
-  //Configura a placa para mostra na tela
-  mqtt.setServer(BROKER_URL(), brokerPort);
-  Serial.println("Conectando no Broker");
-  
-  String boardID = "S1-"; //Cria um nome que começa com "s1-"
-  boardID += String(random(0xffff),HEX); //Junta o "s1-" com um número aleatório Hexadecimal
+  ledcAttach(pino_vermelho, 5000, 8);
+  ledcAttach(pino_verde, 5000, 8);
+  ledcAttach(pino_azul, 5000, 8);
+  definirCorLED(255, 0, 0);
 
-  //Enquanto não estiver conectado mostra "."
-  while (!mqtt.connect()){
-    mqttClient.connect(userID.c_srt(),BROKER_USER_NAME, BROKER_URS_PASS);
-    Serial.print(".");
-    delay(2000);
-  }
+  conectar_wifi();
 
-  mqtt.subscribe(TOPIC1));
-  mqtt.setCallback(callback);
-  Serial.println("\nConectado com sucesso ao broker");
+  cliente_wifi.setInsecure();
 
+  broker.setServer(BROKER_URL, BROKER_PORT);
 }
 
 void loop() {
-  String mensagem = "";   //texto com informação enviada para o broker
-  // Sring topico = "AulaIot/msg";
-  // mqtt.publish(topico.c_str(), msg.c_str());
-  // delay(20000);
-  // mqtt.loop(); 
-
-  if(Serial.available() > 0){
-    mensagem = Serial.readStringUntil('\n');
-    Serial.print("Mensagem digitada: ");
-    Serial.println(mensagem);
-    mqtt.publish("topicoluiz",mensagem.c_str()); //envia msg
+  if (!broker.connected()) {
+    reconectar_broker();
   }
-  mqtt.loop(); //mantem a conexão
+  broker.loop();
+
+  int luz = analogRead(SENSOR_LDR);
+  float temp = sensorDHT.readTemperature();
+  float umid = sensorDHT.readHumidity();
+
+  char msg_luminosidade[10];
+  sprintf(msg_luminosidade, "%d", luz);
+  broker.publish(TOPIC3, msg_luminosidade);
+
+  char msg_temperatura[10];
+  dtostrf(temp, 4, 1, msg_temperatura);
+  broker.publish(TOPIC1, msg_temperatura);
+
+  char msg_umidade[10];
+  dtostrf(umid, 4, 1, msg_umidade);
+  broker.publish(TOPIC2, msg_umidade);
+
+  Serial.println("Enviando dados:");
+  Serial.print("Luz: "); Serial.println(luz);
+  Serial.print("Temp: "); Serial.println(temp);
+  Serial.print("Umid: "); Serial.println(umid);
+  Serial.println("---");
+
+  dist = obterDistanciaUltrassonica(PINO_ECHO, PINO_TRIGGER);
+  if (dist > 0) {
+    Serial.print("Distancia: ");
+    Serial.print(dist);
+    Serial.println(" cm");
+  }
+
+  bool presenca_atual = (dist > 0 && dist < 30);
+
+  if (presenca_atual != presenca_anterior) {
+    if (presenca_atual) {
+      broker.publish(TOPIC4, "1");
+      Serial.println("Presenca detectada!");
+      definirCorLED(255, 255, 0);
+    } else {
+      broker.publish(TOPIC4, "0");
+      Serial.println("Presenca finalizada!");
+      definirCorLED(0, 255, 0);
+    }
+    presenca_anterior = presenca_atual;
+  }
+
+  delay(5000);
 }
 
-void callback(char* topic, byte* payload, unsigned long length){
-    String mensagemRecebida = "";
-    for(int i = 0; i < length; i++){
-      mensagemRecebida += (char) payload[i];
+int obterDistanciaUltrassonica(byte echo, byte trigger) {
+  digitalWrite(trigger, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigger, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigger, LOW);
+
+  unsigned long duracao = pulseIn(echo, HIGH, 30000);
+  if (duracao == 0) return -1;
+  return (duracao * 0.0343) / 2;
+}
+
+void definirCorLED(byte vermelho, byte verde, byte azul) {
+  ledcWrite(pino_vermelho, vermelho);
+  ledcWrite(pino_verde, verde);
+  ledcWrite(pino_azul, azul);
+}#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+#include "env.h"
+
+void definirCorLED(byte vermelho, byte verde, byte azul);
+int obterDistanciaUltrassonica(byte pino_echo, byte pino_trigger);
+
+#define SENSOR_LDR 34
+#define SENSOR_DHT 4
+#define PINO_TRIGGER 22
+#define PINO_ECHO 23
+
+const byte pino_vermelho = 14;
+const byte pino_verde = 26;
+const byte pino_azul = 25;
+#define TIPO_DHT DHT11
+
+DHT sensorDHT(SENSOR_DHT, TIPO_DHT);
+int dist = 0;
+bool presenca_anterior = false;
+
+WiFiClientSecure cliente_wifi;
+PubSubClient broker(cliente_wifi);
+
+void conectar_wifi() {
+  Serial.print("Conectando-se: ");
+  Serial.println(SSID);
+  definirCorLED(0, 0, 255);
+  WiFi.begin(SSID, PASS);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi OK!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+  definirCorLED(0, 255, 0);
+}
+
+void reconectar_broker() {
+  while (!broker.connected()) {
+    Serial.print("Conectando broker... ");
+    if (broker.connect("ESP32_S1", BROKER_USER_NAME, BROKER_USER_PASS)) {
+      Serial.println("OK!");
+      definirCorLED(0, 255, 0);
+    } else {
+      Serial.print("Erro(");
+      Serial.print(broker.state());
+      Serial.println("). Tentando em 5s...");
+      delay(5000);
     }
-    Serial.println(mensagemRecebida);
+  }
+}
 
-  if(mensagemRecebida == "acender" ) {
-    digitalWrite(ledPin, HIGH); 
-    delay(1000);      
-    Serial.println("ligando...");         
+void setup() {
+  Serial.begin(115200);
+  pinMode(SENSOR_LDR, INPUT);
+  sensorDHT.begin();
+  pinMode(PINO_TRIGGER, OUTPUT);
+  pinMode(PINO_ECHO, INPUT);
+
+  ledcAttach(pino_vermelho, 5000, 8);
+  ledcAttach(pino_verde, 5000, 8);
+  ledcAttach(pino_azul, 5000, 8);
+  definirCorLED(255, 0, 0);
+
+  conectar_wifi();
+
+  cliente_wifi.setInsecure();
+
+  broker.setServer(BROKER_URL, BROKER_PORT);
+}
+
+void loop() {
+  if (!broker.connected()) {
+    reconectar_broker();
+  }
+  broker.loop();
+
+  int luz = analogRead(SENSOR_LDR);
+  float temp = sensorDHT.readTemperature();
+  float umid = sensorDHT.readHumidity();
+
+  char msg_luminosidade[10];
+  sprintf(msg_luminosidade, "%d", luz);
+  broker.publish(TOPIC3, msg_luminosidade);
+
+  char msg_temperatura[10];
+  dtostrf(temp, 4, 1, msg_temperatura);
+  broker.publish(TOPIC1, msg_temperatura);
+
+  char msg_umidade[10];
+  dtostrf(umid, 4, 1, msg_umidade);
+  broker.publish(TOPIC2, msg_umidade);
+
+  Serial.println("Enviando dados:");
+  Serial.print("Luz: "); Serial.println(luz);
+  Serial.print("Temp: "); Serial.println(temp);
+  Serial.print("Umid: "); Serial.println(umid);
+  Serial.println("---");
+
+  dist = obterDistanciaUltrassonica(PINO_ECHO, PINO_TRIGGER);
+  if (dist > 0) {
+    Serial.print("Distancia: ");
+    Serial.print(dist);
+    Serial.println(" cm");
   }
 
-  if(mensagemRecebida == "apagar" ) {              
-    digitalWrite(ledPin, LOW);  
-    delay(1000); 
-    Serial.println("apagando...");
+  bool presenca_atual = (dist > 0 && dist < 30);
+
+  if (presenca_atual != presenca_anterior) {
+    if (presenca_atual) {
+      broker.publish(TOPIC4, "1");
+      Serial.println("Presenca detectada!");
+      definirCorLED(255, 255, 0);
+    } else {
+      broker.publish(TOPIC4, "0");
+      Serial.println("Presenca finalizada!");
+      definirCorLED(0, 255, 0);
+    }
+    presenca_anterior = presenca_atual;
   }
 
+  delay(5000);
+}
+
+int obterDistanciaUltrassonica(byte echo, byte trigger) {
+  digitalWrite(trigger, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigger, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigger, LOW);
+
+  unsigned long duracao = pulseIn(echo, HIGH, 30000);
+  if (duracao == 0) return -1;
+  return (duracao * 0.0343) / 2;
+}
+
+void definirCorLED(byte vermelho, byte verde, byte azul) {
+  ledcWrite(pino_vermelho, vermelho);
+  ledcWrite(pino_verde, verde);
+  ledcWrite(pino_azul, azul);
 }
